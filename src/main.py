@@ -1,6 +1,6 @@
-"""Interactive entry point for the customer service assistant.
+"""Point d'entrée interactif pour l'assistant de service client.
 
-Provides a command-line chat interface for testing the bot.
+Fournit une interface de chat en ligne de commande pour tester le bot.
 """
 
 import os
@@ -12,7 +12,7 @@ from .bot import CustomerServiceBot
 
 
 def main() -> None:
-    """Run the interactive customer service chatbot."""
+    """Lance le chatbot de service client interactif."""
     load_dotenv()
 
     if not os.getenv("OPENAI_API_KEY"):
@@ -24,7 +24,7 @@ def main() -> None:
     db_path = os.getenv("DATABASE_PATH", "orders.db")
     routing_strategy = os.getenv("ROUTING_STRATEGY", "embeddings")
 
-    # Prompt for user authentication
+    # Demander l'authentification de l'utilisateur
     print("=" * 60)
     print("  Assistant de Service Client - E-Commerce")
     print("=" * 60)
@@ -36,7 +36,7 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        # ChatOpenAI reads OPENAI_API_KEY from the environment automatically
+        # ChatOpenAI lit OPENAI_API_KEY depuis l'environnement automatiquement
         bot = CustomerServiceBot(
             user_email=email,
             model=model,

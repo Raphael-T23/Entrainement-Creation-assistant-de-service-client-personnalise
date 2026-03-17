@@ -1,4 +1,4 @@
-"""Tests for the database access layer."""
+"""Tests pour la couche d'accès à la base de données."""
 
 import sqlite3
 import tempfile
@@ -19,7 +19,7 @@ from src.database import (
 
 @pytest.fixture
 def test_db():
-    """Create a temporary test database with sample data."""
+    """Crée une base de données de test temporaire avec des données d'exemple."""
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     conn = sqlite3.connect(path)
@@ -48,7 +48,7 @@ def test_db():
             date_delivered TIMESTAMP
         )"""
     )
-    # Insert test users
+    # Insérer les utilisateurs de test
     conn.execute(
         'INSERT INTO users VALUES (0, 1, "Alice", "Dupont", "2024-01-01", '
         '612345678, "alice@test.com", "1 Rue Test", "Paris", 75001)'
@@ -57,7 +57,7 @@ def test_db():
         'INSERT INTO users VALUES (1, 2, "Bob", "Martin", "2024-02-01", '
         '698765432, "bob@test.com", "2 Rue Test", "Lyon", 69001)'
     )
-    # Insert test orders
+    # Insérer les commandes de test
     conn.execute(
         'INSERT INTO orders VALUES (0, 101, 1, "delivered", '
         '"2024-05-01 10:00:00", "2024-05-02 10:00:00", "2024-05-10 10:00:00")'
@@ -105,8 +105,8 @@ class TestGetUserByEmail:
         assert user is None
 
     def test_email_case_sensitivity(self, test_db):
-        # SQLite is case-insensitive for ASCII by default in LIKE,
-        # but = is case-sensitive
+        # SQLite est insensible à la casse pour les caractères ASCII avec LIKE par défaut,
+        # mais = est sensible à la casse
         user = get_user_by_email("ALICE@TEST.COM", test_db)
         assert user is None
 
@@ -115,7 +115,7 @@ class TestGetOrdersForUser:
     def test_user_with_orders(self, test_db):
         orders = get_orders_for_user(1, test_db)
         assert len(orders) == 3
-        # Should be ordered by date_purchase DESC
+        # Les résultats doivent être triés par date_purchase DESC
         assert orders[0]["order_id"] == 103
         assert orders[1]["order_id"] == 102
         assert orders[2]["order_id"] == 101
@@ -142,12 +142,12 @@ class TestGetOrderById:
         assert order is None
 
     def test_order_belongs_to_different_user(self, test_db):
-        """User 1 should not be able to access User 2's orders."""
+        """L'utilisateur 1 ne doit pas pouvoir accéder aux commandes de l'utilisateur 2."""
         order = get_order_by_id(201, 1, test_db)
         assert order is None
 
     def test_cross_user_access_prevented(self, test_db):
-        """User 2 should not be able to access User 1's orders."""
+        """L'utilisateur 2 ne doit pas pouvoir accéder aux commandes de l'utilisateur 1."""
         order = get_order_by_id(101, 2, test_db)
         assert order is None
 
@@ -214,7 +214,7 @@ class TestFormatOrderSummary:
         summary = format_order_summary(order)
         assert "103" in summary
         assert "facturée" in summary
-        # Shipped date should not appear for an invoiced order
+        # La date d'expédition ne doit pas apparaître pour une commande facturée
         assert "Date d'expédition" not in summary
 
     def test_shipped_order(self):
@@ -228,5 +228,5 @@ class TestFormatOrderSummary:
         summary = format_order_summary(order)
         assert "102" in summary
         assert "expédiée" in summary
-        # Delivery date should not appear for a shipped (not yet delivered) order
+        # La date de livraison ne doit pas apparaître pour une commande expédiée (pas encore livrée)
         assert "Date de livraison" not in summary

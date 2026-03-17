@@ -1,14 +1,14 @@
-"""Prompt templates for the customer service assistant.
+"""Modèles de prompt pour l'assistant de service client.
 
-Contains system prompts designed to:
-- Scope the bot to the authenticated user only
-- Prevent prompt injection attacks
-- Ensure natural, friendly responses in French
-- Handle edge cases (missing orders, aggressive users)
+Contient des prompts système conçus pour :
+- Limiter le bot à l'utilisateur authentifié uniquement
+- Prévenir les attaques par injection de prompt
+- Garantir des réponses naturelles et conviviales en français
+- Gérer les cas limites (commandes manquantes, utilisateurs agressifs)
 
-LangChain ``ChatPromptTemplate`` helpers are also provided so that callers
-can compose full prompt pipelines using the LangChain Expression Language
-(LCEL).
+Des helpers ``ChatPromptTemplate`` de LangChain sont également fournis afin que
+les appelants puissent composer des pipelines de prompt complets en utilisant le
+LangChain Expression Language (LCEL).
 """
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -94,11 +94,11 @@ Réponds UNIQUEMENT par "service_client" ou "hors_sujet".
 """
 
 # ---------------------------------------------------------------------------
-# LangChain prompt templates
+# Modèles de prompt LangChain
 # ---------------------------------------------------------------------------
 
-# Ready-to-use ChatPromptTemplate for the routing classifier.
-# Used in routing.py as part of an LCEL chain:
+# ChatPromptTemplate prêt à l'emploi pour le classificateur de routage.
+# Utilisé dans routing.py au sein d'une chaîne LCEL :
 #   ROUTING_CHAT_PROMPT | ChatOpenAI(...) | StrOutputParser()
 ROUTING_CHAT_PROMPT: ChatPromptTemplate = ChatPromptTemplate.from_messages(
     [
@@ -109,14 +109,14 @@ ROUTING_CHAT_PROMPT: ChatPromptTemplate = ChatPromptTemplate.from_messages(
 
 
 def get_system_prompt_template() -> ChatPromptTemplate:
-    """Return a ``ChatPromptTemplate`` for the bot system message.
+    """Retourne un ``ChatPromptTemplate`` pour le message système du bot.
 
-    The template accepts ``first_name``, ``last_name`` and ``email``
-    variables and produces a single ``SystemMessage``.  It can be used
-    inside a larger LCEL chain together with a
-    ``MessagesPlaceholder("chat_history")`` and a human turn.
+    Le template accepte les variables ``first_name``, ``last_name`` et ``email``
+    et produit un unique ``SystemMessage``. Il peut être utilisé au sein d'une
+    chaîne LCEL plus large avec un ``MessagesPlaceholder("chat_history")`` et
+    un tour humain.
 
-    Example::
+    Exemple ::
 
         from langchain_core.prompts import MessagesPlaceholder
 
