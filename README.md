@@ -23,8 +23,8 @@ statut de leurs commandes.
 src/
 ├── __init__.py
 ├── database.py    # Couche d'accès à la base de données SQLite
-├── prompts.py     # Prompts système, templates LangChain (ChatPromptTemplate)
-├── routing.py     # Routage sémantique (LangChain LCEL / embeddings / mots-clés)
+├── prompts.py     # Prompts système et templates (ChatPromptTemplate)
+├── routing.py     # Routage sémantique (embeddings, LCEL, mots-clés)
 ├── bot.py         # Logique principale du bot (ChatOpenAI, @tool, bind_tools)
 └── main.py        # Point d'entrée interactif (CLI)
 
@@ -35,27 +35,27 @@ tests/
 └── test_bot.py
 ```
 
-## LangChain
+## Stack technique
 
-Le projet utilise **LangChain** (`langchain` + `langchain-openai`) pour les
-composants suivants :
+Le projet s'appuie sur **LangChain** (`langchain` + `langchain-openai`) comme
+couche d'orchestration LLM. Voici les composants utilisés :
 
-| Composant | Avant | Après (LangChain) |
-|-----------|-------|-------------------|
-| Modèle LLM | `openai.OpenAI` (SDK brut) | `langchain_openai.ChatOpenAI` |
-| Embeddings | `client.embeddings.create()` | `langchain_openai.OpenAIEmbeddings` |
-| Routage LLM | appel direct `chat.completions` | chaîne LCEL : `ChatPromptTemplate \| ChatOpenAI \| StrOutputParser` |
-| Définition des outils | dicts JSON OpenAI | décorateur `@tool` de `langchain_core` |
-| Liaison outils/LLM | paramètre `tools=` du SDK | `ChatOpenAI.bind_tools()` |
-| Historique | liste de dicts `{"role": ..., "content": ...}` | liste typée `BaseMessage` (HumanMessage, AIMessage, ToolMessage…) |
-| Templates de prompts | f-strings | `ChatPromptTemplate` (disponible via `get_system_prompt_template()`) |
+| Composant            | Implémentation                                                         |
+|----------------------|------------------------------------------------------------------------|
+| Modèle LLM           | `langchain_openai.ChatOpenAI`                                          |
+| Embeddings           | `langchain_openai.OpenAIEmbeddings`                                    |
+| Routage LLM          | Chaîne LCEL : `ChatPromptTemplate \| ChatOpenAI \| StrOutputParser`    |
+| Définition des outils| Décorateur `@tool` de `langchain_core`                                 |
+| Liaison outils/LLM   | `ChatOpenAI.bind_tools()`                                              |
+| Historique           | Liste typée `BaseMessage` (HumanMessage, AIMessage, ToolMessage…)      |
+| Templates de prompts | `ChatPromptTemplate` (via `get_system_prompt_template()`)              |
 
-### Bénéfices apportés par LangChain
+### Pourquoi LangChain ?
 
 - **Composabilité LCEL** : le routage LLM s'écrit en une ligne de chaîne
-  `prompt | llm | parser` au lieu d'un appel SDK verbeux.
-- **Types de messages stricts** : `AIMessage.tool_calls` remplace le parsing
-  JSON manuel et rend le code plus robuste.
+  `prompt | llm | parser`, claire et maintenable.
+- **Types de messages stricts** : `AIMessage.tool_calls` rend le traitement
+  des appels d'outils robuste et explicite.
 - **`@tool` décorateur** : les outils sont des fonctions Python ordinaires ;
   leurs schémas JSON sont générés automatiquement à partir des signatures et
   docstrings.
@@ -90,11 +90,11 @@ ROUTING_STRATEGY=embeddings
 
 ### Stratégies de routage disponibles
 
-| Stratégie    | Description                                                  | API requise |
-|-------------|--------------------------------------------------------------|-------------|
-| `embeddings` | `OpenAIEmbeddings` + similarité cosinus (LangChain)          | Oui         |
-| `llm`        | Chaîne LCEL `ChatPromptTemplate \| ChatOpenAI \| StrOutputParser` | Oui    |
-| `keywords`   | Correspondance par mots-clés (fallback, aucune API)          | Non         |
+| Stratégie    | Description                                                       | API requise |
+|--------------|-------------------------------------------------------------------|-------------|
+| `embeddings` | `OpenAIEmbeddings` + similarité cosinus                           | Oui         |
+| `llm`        | Chaîne LCEL `ChatPromptTemplate \| ChatOpenAI \| StrOutputParser` | Oui         |
+| `keywords`   | Correspondance par mots-clés (fallback, aucune API)               | Non         |
 
 ## Utilisation
 
@@ -128,4 +128,3 @@ La base SQLite `orders.db` contient deux tables :
   - `invoiced` : facturée (en attente d'expédition)
   - `shipped` : expédiée (en cours de livraison)
   - `delivered` : livrée
-
