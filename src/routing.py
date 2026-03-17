@@ -1,14 +1,24 @@
 """Semantic routing module for the customer service assistant.
 
 Classifies user queries to determine if they relate to customer service
-before forwarding them to the LLM. Uses OpenAI embeddings for semantic
-similarity with fallback to keyword-based classification.
+before forwarding them to the LLM.
+
+Three strategies are supported, all with the same public interface:
+
+* **embeddings** – Uses LangChain ``OpenAIEmbeddings`` to compute cosine
+  similarity between the user query and labelled reference sentences.
+  Ambiguous cases are resolved by the LLM-based strategy.
+* **llm** – Runs the query through a LangChain LCEL chain composed of a
+  ``ChatPromptTemplate``, ``ChatOpenAI``, and a ``StrOutputParser``.
+* **keywords** – Simple keyword matching (no API call required; used as
+  a fallback when the API is unavailable).
 """
 
 import numpy as np
-from openai import OpenAI
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from .prompts import ROUTING_PROMPT
+from .prompts import ROUTING_CHAT_PROMPT
 
 # Reference sentences representing valid customer service topics
 CUSTOMER_SERVICE_REFERENCES = [
@@ -59,13 +69,14 @@ CUSTOMER_SERVICE_KEYWORDS = [
 SIMILARITY_THRESHOLD = 0.35
 
 
-def _compute_embeddings(texts: list[str], client: OpenAI) -> np.ndarray:
-    """Compute OpenAI embeddings for a list of texts."""
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=texts,
-    )
-    return np.array([item.embedding for item in response.data])
+def _compute_embeddings(texts: list[str]) -> np.ndarray:
+    """Compute embeddings for *texts* using LangChain ``OpenAIEmbeddings``.
+
+    The model ``text-embedding-3-small`` is used.  The ``OPENAI_API_KEY``
+    environment variable must be set.
+    """
+    embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+    return np.array(embedder.embed_documents(texts))
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -75,14 +86,14 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return a_norm @ b_norms.T
 
 
-def route_with_embeddings(query: str, client: OpenAI) -> str:
-    """Classify a query using OpenAI embeddings and cosine similarity.
+def route_with_embeddings(query: str) -> str:
+    """Classify a query using LangChain embeddings and cosine similarity.
 
-    Returns "service_client" or "hors_sujet".
+    Returns ``"service_client"`` or ``"hors_sujet"``.
     """
     all_refs = CUSTOMER_SERVICE_REFERENCES + OFF_TOPIC_REFERENCES
     texts = [query] + all_refs
-    embeddings = _compute_embeddings(texts, client)
+    embeddings = _compute_embeddings(texts)
 
     query_emb = embeddings[0]
     cs_embs = embeddings[1: len(CUSTOMER_SERVICE_REFERENCES) + 1]
@@ -96,24 +107,26 @@ def route_with_embeddings(query: str, client: OpenAI) -> str:
     if ot_sim - cs_sim > SIMILARITY_THRESHOLD:
         return "hors_sujet"
     # When scores are close, use the LLM as a tiebreaker
-    return route_with_llm(query, client)
+    return route_with_llm(query)
 
 
-def route_with_llm(query: str, client: OpenAI, model: str = "gpt-4o-mini") -> str:
-    """Classify a query using an LLM call.
+def route_with_llm(query: str, model: str = "gpt-4o-mini") -> str:
+    """Classify a query using a LangChain LCEL chain.
 
-    Returns "service_client" or "hors_sujet".
+    The chain is composed of:
+
+    .. code-block:: python
+
+        ROUTING_CHAT_PROMPT | ChatOpenAI(...) | StrOutputParser()
+
+    Returns ``"service_client"`` or ``"hors_sujet"``.
     """
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": ROUTING_PROMPT},
-            {"role": "user", "content": query},
-        ],
-        temperature=0.0,
-        max_tokens=20,
+    chain = (
+        ROUTING_CHAT_PROMPT
+        | ChatOpenAI(model=model, temperature=0, max_tokens=20)
+        | StrOutputParser()
     )
-    result = response.choices[0].message.content.strip().lower()
+    result = chain.invoke({"query": query}).strip().lower()
     if "service_client" in result:
         return "service_client"
     return "hors_sujet"
@@ -122,7 +135,7 @@ def route_with_llm(query: str, client: OpenAI, model: str = "gpt-4o-mini") -> st
 def route_with_keywords(query: str) -> str:
     """Fallback keyword-based classification (no API required).
 
-    Returns "service_client" or "hors_sujet".
+    Returns ``"service_client"`` or ``"hors_sujet"``.
     """
     query_lower = query.lower()
     for keyword in CUSTOMER_SERVICE_KEYWORDS:
@@ -135,30 +148,44 @@ class SemanticRouter:
     """Routes user queries to determine if they concern customer service.
 
     Supports three strategies:
-    - "embeddings": Uses OpenAI embeddings for semantic similarity
-    - "llm": Uses an LLM call for classification
-    - "keywords": Uses keyword matching (no API required, for testing)
+
+    * ``"embeddings"`` – LangChain ``OpenAIEmbeddings`` + cosine similarity
+      (falls back to the ``"llm"`` strategy for ambiguous cases, and to
+      ``"keywords"`` if the API is unavailable).
+    * ``"llm"`` – LangChain LCEL chain (falls back to ``"keywords"`` if
+      the API is unavailable).
+    * ``"keywords"`` – keyword matching (no API call required).
+
+    The ``client`` parameter is accepted for backward compatibility but is
+    no longer used; LangChain components read ``OPENAI_API_KEY`` directly
+    from the environment.
     """
 
     def __init__(
         self,
-        client: OpenAI | None = None,
+        client=None,  # kept for backward compatibility, not used
         strategy: str = "embeddings",
         model: str = "gpt-4o-mini",
     ):
-        self.client = client
         self.strategy = strategy
         self.model = model
 
     def classify(self, query: str) -> str:
-        """Classify a user query. Returns 'service_client' or 'hors_sujet'."""
-        if self.strategy == "embeddings" and self.client:
-            return route_with_embeddings(query, self.client)
-        elif self.strategy == "llm" and self.client:
-            return route_with_llm(query, self.client, self.model)
+        """Classify a user query. Returns ``'service_client'`` or ``'hors_sujet'``."""
+        if self.strategy == "embeddings":
+            try:
+                return route_with_embeddings(query)
+            except Exception:
+                return route_with_keywords(query)
+        elif self.strategy == "llm":
+            try:
+                return route_with_llm(query, self.model)
+            except Exception:
+                return route_with_keywords(query)
         else:
             return route_with_keywords(query)
 
     def is_customer_service(self, query: str) -> bool:
-        """Return True if the query concerns customer service."""
+        """Return ``True`` if the query concerns customer service."""
         return self.classify(query) == "service_client"
+

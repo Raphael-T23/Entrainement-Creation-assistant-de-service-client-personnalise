@@ -1,13 +1,32 @@
 """Main bot module for the customer service assistant.
 
-Orchestrates the LLM, database access, semantic routing, and
-conversation management to provide a complete customer service experience.
+Orchestrates the LLM, database access, semantic routing, and conversation
+management to provide a complete customer service experience.
+
+This module uses the **LangChain** framework:
+
+* ``ChatOpenAI`` (``langchain-openai``) replaces the raw ``openai.OpenAI``
+  client.
+* Tool functions are declared with LangChain's ``@tool`` decorator and bound
+  to the model via ``ChatOpenAI.bind_tools()``.
+* The conversation history is maintained as a list of typed LangChain
+  ``BaseMessage`` objects (``SystemMessage``, ``HumanMessage``, ``AIMessage``,
+  ``ToolMessage``), replacing the previous plain-dict format.
+* The tool-calling loop is driven by the ``AIMessage.tool_calls`` attribute
+  returned by LangChain, which avoids manual JSON parsing.
 """
 
-import json
 from typing import Optional
 
-from openai import OpenAI
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 
 from .database import (
     format_order_summary,
@@ -18,91 +37,6 @@ from .database import (
 )
 from .prompts import SYSTEM_PROMPT_TEMPLATE
 from .routing import SemanticRouter
-
-# Tool definitions for OpenAI function calling
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_all_orders",
-            "description": (
-                "Récupère toutes les commandes de l'utilisateur authentifié. "
-                "Utilise cette fonction quand l'utilisateur demande la liste "
-                "de ses commandes ou des informations générales sur ses commandes."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_order_details",
-            "description": (
-                "Récupère les détails d'une commande spécifique par son numéro. "
-                "Utilise cette fonction quand l'utilisateur demande des informations "
-                "sur une commande précise en mentionnant un numéro de commande."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "order_id": {
-                        "type": "integer",
-                        "description": "Le numéro de la commande.",
-                    }
-                },
-                "required": ["order_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_orders_by_status",
-            "description": (
-                "Récupère les commandes de l'utilisateur filtrées par statut. "
-                "Les statuts possibles sont : 'invoiced' (facturée), "
-                "'shipped' (expédiée), 'delivered' (livrée)."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["invoiced", "shipped", "delivered"],
-                        "description": "Le statut de la commande à filtrer.",
-                    }
-                },
-                "required": ["status"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "transfer_to_human",
-            "description": (
-                "Transfère la conversation à un agent humain. "
-                "Utilise cette fonction quand l'utilisateur souhaite modifier "
-                "ou annuler une commande, ou quand il a besoin d'une aide "
-                "qui dépasse les capacités du bot."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "reason": {
-                        "type": "string",
-                        "description": "La raison du transfert.",
-                    }
-                },
-                "required": ["reason"],
-            },
-        },
-    },
-]
 
 OFF_TOPIC_RESPONSE = (
     "Je suis désolé, mais je suis un assistant dédié au service client. "
@@ -119,26 +53,40 @@ TRANSFER_RESPONSE = (
 
 
 class CustomerServiceBot:
-    """Customer service chatbot powered by OpenAI with tool calling.
+    """Customer service chatbot powered by LangChain and OpenAI.
+
+    The bot uses LangChain's ``ChatOpenAI`` as the language model backend and
+    exposes four ``@tool``-decorated functions to the model via
+    ``bind_tools()``.  Multi-turn tool calling is handled by an explicit loop
+    that inspects ``AIMessage.tool_calls``, executes each requested tool, and
+    feeds the results back as ``ToolMessage`` objects.
 
     Attributes:
-        client: OpenAI client instance.
-        model: The OpenAI model to use.
+        llm: ``ChatOpenAI`` instance.
+        llm_with_tools: LLM with the user-scoped tools bound via
+            ``bind_tools()``.
+        model: The OpenAI model name.
         user: Dict with authenticated user information.
-        router: SemanticRouter instance for query classification.
-        conversation: List of conversation messages.
+        system_prompt: Formatted system-prompt string for the current user.
+        tools: List of LangChain ``@tool`` functions scoped to the user.
+        router: ``SemanticRouter`` instance for query classification.
+        chat_history: Running list of ``BaseMessage`` objects (excludes the
+            system message, which is prepended on every call).
         db_path: Path to the SQLite database.
     """
 
     def __init__(
         self,
-        openai_client: OpenAI,
         user_email: str,
         model: str = "gpt-4o-mini",
         routing_strategy: str = "embeddings",
         db_path: Optional[str] = None,
+        llm: Optional[ChatOpenAI] = None,
+        temperature: float = 0.3,
+        # openai_client is kept for backward compatibility and is ignored;
+        # use the `llm` parameter to inject a custom / mock LLM instead.
+        openai_client=None,
     ):
-        self.client = openai_client
         self.model = model
         self.db_path = db_path
 
@@ -150,25 +98,37 @@ class CustomerServiceBot:
             )
 
         # Build the system prompt with user info
-        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        self.system_prompt: str = SYSTEM_PROMPT_TEMPLATE.format(
             first_name=self.user["first_name"],
             last_name=self.user["last_name"],
             email=self.user["email"],
         )
 
-        self.conversation: list[dict] = [
-            {"role": "system", "content": system_prompt}
-        ]
-
-        # Initialize the semantic router
-        self.router = SemanticRouter(
-            client=openai_client,
-            strategy=routing_strategy,
-            model=model,
+        # Initialise the LangChain LLM (inject a mock in tests via `llm=`)
+        self.llm: ChatOpenAI = llm if llm is not None else ChatOpenAI(
+            model=model, temperature=temperature
         )
 
+        # Create user-scoped @tool functions and bind them to the LLM
+        self.tools = self._create_user_tools()
+        self.llm_with_tools = self.llm.bind_tools(self.tools)
+
+        # Conversation history (system message prepended on each call)
+        self.chat_history: list[BaseMessage] = []
+
+        # Semantic router
+        self.router = SemanticRouter(strategy=routing_strategy, model=model)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _execute_tool_call(self, name: str, arguments: dict) -> str:
-        """Execute a tool call and return the result as a string."""
+        """Execute a named tool and return its result as a string.
+
+        Keeping this as a separate method makes unit-testing the tool logic
+        straightforward without going through the LLM.
+        """
         user_id = self.user["user_id"]
 
         if name == "get_all_orders":
@@ -200,65 +160,105 @@ class CustomerServiceBot:
 
         return "Outil inconnu."
 
+    def _create_user_tools(self) -> list:
+        """Return a list of LangChain ``@tool`` functions scoped to this user.
+
+        Each function delegates to :meth:`_execute_tool_call` so that the
+        tool logic can be tested directly on the bot instance.
+        """
+        bot = self
+
+        @tool
+        def get_all_orders() -> str:
+            """Récupère toutes les commandes de l'utilisateur authentifié.
+
+            Utilise cette fonction quand l'utilisateur demande la liste
+            de ses commandes ou des informations générales sur ses commandes.
+            """
+            return bot._execute_tool_call("get_all_orders", {})
+
+        @tool
+        def get_order_details(order_id: int) -> str:
+            """Récupère les détails d'une commande spécifique par son numéro.
+
+            Utilise cette fonction quand l'utilisateur demande des informations
+            sur une commande précise en mentionnant un numéro de commande.
+            """
+            return bot._execute_tool_call("get_order_details", {"order_id": order_id})
+
+        @tool
+        def get_orders_by_status(status: str) -> str:
+            """Récupère les commandes de l'utilisateur filtrées par statut.
+
+            Les statuts possibles sont : 'invoiced' (facturée),
+            'shipped' (expédiée), 'delivered' (livrée).
+            """
+            return bot._execute_tool_call("get_orders_by_status", {"status": status})
+
+        @tool
+        def transfer_to_human(reason: str) -> str:
+            """Transfère la conversation à un agent humain.
+
+            Utilise cette fonction quand l'utilisateur souhaite modifier
+            ou annuler une commande, ou quand il a besoin d'une aide
+            qui dépasse les capacités du bot.
+            """
+            return bot._execute_tool_call("transfer_to_human", {"reason": reason})
+
+        return [get_all_orders, get_order_details, get_orders_by_status, transfer_to_human]
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def chat(self, user_message: str) -> str:
         """Process a user message and return the bot's response.
 
-        This method:
-        1. Applies semantic routing to filter off-topic queries
-        2. Sends the message to the LLM with tool definitions
-        3. Handles any tool calls (database queries)
-        4. Returns the final formatted response
+        Steps:
+
+        1. **Semantic routing** – off-topic queries are rejected before
+           reaching the LLM.
+        2. The user message and the running ``chat_history`` are assembled
+           into a message list (prefixed by the ``SystemMessage``).
+        3. The LLM (with tools bound) is invoked via
+           ``self.llm_with_tools.invoke()``.
+        4. If the response contains tool calls, each tool is executed and its
+           result is fed back as a ``ToolMessage``; the LLM is called again
+           until it returns a plain text answer.
+        5. The human / assistant pair is appended to ``chat_history`` and the
+           final text is returned.
         """
         # Step 1: Semantic routing
         if not self.router.is_customer_service(user_message):
             return OFF_TOPIC_RESPONSE
 
-        # Step 2: Add user message to conversation
-        self.conversation.append({"role": "user", "content": user_message})
-
-        # Step 3: Call the LLM
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=self.conversation,
-            tools=TOOLS,
-            temperature=0.3,
+        # Step 2: Build the message list for this turn
+        messages: list[BaseMessage] = (
+            [SystemMessage(content=self.system_prompt)]
+            + self.chat_history
+            + [HumanMessage(content=user_message)]
         )
 
-        assistant_message = response.choices[0].message
+        # Step 3: First LLM call
+        response: AIMessage = self.llm_with_tools.invoke(messages)
 
-        # Step 4: Handle tool calls if any
-        while assistant_message.tool_calls:
-            # Add the assistant's message with tool calls
-            self.conversation.append(assistant_message.model_dump())
-
-            # Execute each tool call
-            for tool_call in assistant_message.tool_calls:
-                fn_name = tool_call.function.name
-                fn_args = json.loads(tool_call.function.arguments)
-                result = self._execute_tool_call(fn_name, fn_args)
-
-                self.conversation.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    }
+        # Step 4: Tool-calling loop
+        while response.tool_calls:
+            messages.append(response)
+            for tc in response.tool_calls:
+                result = self._execute_tool_call(tc["name"], tc["args"])
+                messages.append(
+                    ToolMessage(content=result, tool_call_id=tc["id"])
                 )
+            response = self.llm_with_tools.invoke(messages)
 
-            # Get the next response from the LLM
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=self.conversation,
-                tools=TOOLS,
-                temperature=0.3,
-            )
-            assistant_message = response.choices[0].message
-
-        # Step 5: Add and return the final response
-        bot_response = assistant_message.content or ""
-        self.conversation.append({"role": "assistant", "content": bot_response})
+        # Step 5: Persist the turn in chat_history and return
+        bot_response: str = response.content or ""
+        self.chat_history.append(HumanMessage(content=user_message))
+        self.chat_history.append(AIMessage(content=bot_response))
         return bot_response
 
     def reset_conversation(self) -> None:
-        """Reset the conversation history, keeping only the system prompt."""
-        self.conversation = [self.conversation[0]]
+        """Clear the conversation history (the system prompt is unaffected)."""
+        self.chat_history = []
+

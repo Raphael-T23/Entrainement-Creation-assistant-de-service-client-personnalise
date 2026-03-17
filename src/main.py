@@ -7,7 +7,6 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from .bot import CustomerServiceBot
 
@@ -16,8 +15,7 @@ def main() -> None:
     """Run the interactive customer service chatbot."""
     load_dotenv()
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    if not os.getenv("OPENAI_API_KEY"):
         print("Erreur : La variable d'environnement OPENAI_API_KEY n'est pas définie.")
         print("Créez un fichier .env basé sur .env.example et ajoutez votre clé API.")
         sys.exit(1)
@@ -25,8 +23,6 @@ def main() -> None:
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     db_path = os.getenv("DATABASE_PATH", "orders.db")
     routing_strategy = os.getenv("ROUTING_STRATEGY", "embeddings")
-
-    client = OpenAI(api_key=api_key)
 
     # Prompt for user authentication
     print("=" * 60)
@@ -40,8 +36,8 @@ def main() -> None:
         sys.exit(1)
 
     try:
+        # ChatOpenAI reads OPENAI_API_KEY from the environment automatically
         bot = CustomerServiceBot(
-            openai_client=client,
             user_email=email,
             model=model,
             routing_strategy=routing_strategy,
@@ -76,3 +72,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
