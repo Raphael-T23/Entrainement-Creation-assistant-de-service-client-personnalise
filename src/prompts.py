@@ -5,7 +5,13 @@ Contains system prompts designed to:
 - Prevent prompt injection attacks
 - Ensure natural, friendly responses in French
 - Handle edge cases (missing orders, aggressive users)
+
+LangChain ``ChatPromptTemplate`` helpers are also provided so that callers
+can compose full prompt pipelines using the LangChain Expression Language
+(LCEL).
 """
+
+from langchain_core.prompts import ChatPromptTemplate
 
 SYSTEM_PROMPT_TEMPLATE = """\
 Tu es un assistant de service client pour une entreprise de e-commerce. \
@@ -86,3 +92,40 @@ Un message NE concerne PAS le service client s'il porte sur :
 
 Réponds UNIQUEMENT par "service_client" ou "hors_sujet".
 """
+
+# ---------------------------------------------------------------------------
+# LangChain prompt templates
+# ---------------------------------------------------------------------------
+
+# Ready-to-use ChatPromptTemplate for the routing classifier.
+# Used in routing.py as part of an LCEL chain:
+#   ROUTING_CHAT_PROMPT | ChatOpenAI(...) | StrOutputParser()
+ROUTING_CHAT_PROMPT: ChatPromptTemplate = ChatPromptTemplate.from_messages(
+    [
+        ("system", ROUTING_PROMPT),
+        ("human", "{query}"),
+    ]
+)
+
+
+def get_system_prompt_template() -> ChatPromptTemplate:
+    """Return a ``ChatPromptTemplate`` for the bot system message.
+
+    The template accepts ``first_name``, ``last_name`` and ``email``
+    variables and produces a single ``SystemMessage``.  It can be used
+    inside a larger LCEL chain together with a
+    ``MessagesPlaceholder("chat_history")`` and a human turn.
+
+    Example::
+
+        from langchain_core.prompts import MessagesPlaceholder
+
+        prompt = (
+            get_system_prompt_template()
+            .partial(first_name="Alice", last_name="Dupont", email="alice@example.com")
+        )
+    """
+    return ChatPromptTemplate.from_messages(
+        [("system", SYSTEM_PROMPT_TEMPLATE)]
+    )
+

@@ -23,9 +23,9 @@ statut de leurs commandes.
 src/
 ├── __init__.py
 ├── database.py    # Couche d'accès à la base de données SQLite
-├── prompts.py     # Prompts système et templates
-├── routing.py     # Routage sémantique (embeddings / LLM / mots-clés)
-├── bot.py         # Logique principale du bot avec tool calling OpenAI
+├── prompts.py     # Prompts système, templates LangChain (ChatPromptTemplate)
+├── routing.py     # Routage sémantique (LangChain LCEL / embeddings / mots-clés)
+├── bot.py         # Logique principale du bot (ChatOpenAI, @tool, bind_tools)
 └── main.py        # Point d'entrée interactif (CLI)
 
 tests/
@@ -34,6 +34,35 @@ tests/
 ├── test_routing.py
 └── test_bot.py
 ```
+
+## LangChain
+
+Le projet utilise **LangChain** (`langchain` + `langchain-openai`) pour les
+composants suivants :
+
+| Composant | Avant | Après (LangChain) |
+|-----------|-------|-------------------|
+| Modèle LLM | `openai.OpenAI` (SDK brut) | `langchain_openai.ChatOpenAI` |
+| Embeddings | `client.embeddings.create()` | `langchain_openai.OpenAIEmbeddings` |
+| Routage LLM | appel direct `chat.completions` | chaîne LCEL : `ChatPromptTemplate \| ChatOpenAI \| StrOutputParser` |
+| Définition des outils | dicts JSON OpenAI | décorateur `@tool` de `langchain_core` |
+| Liaison outils/LLM | paramètre `tools=` du SDK | `ChatOpenAI.bind_tools()` |
+| Historique | liste de dicts `{"role": ..., "content": ...}` | liste typée `BaseMessage` (HumanMessage, AIMessage, ToolMessage…) |
+| Templates de prompts | f-strings | `ChatPromptTemplate` (disponible via `get_system_prompt_template()`) |
+
+### Bénéfices apportés par LangChain
+
+- **Composabilité LCEL** : le routage LLM s'écrit en une ligne de chaîne
+  `prompt | llm | parser` au lieu d'un appel SDK verbeux.
+- **Types de messages stricts** : `AIMessage.tool_calls` remplace le parsing
+  JSON manuel et rend le code plus robuste.
+- **`@tool` décorateur** : les outils sont des fonctions Python ordinaires ;
+  leurs schémas JSON sont générés automatiquement à partir des signatures et
+  docstrings.
+- **`bind_tools()`** : lie les outils au modèle de façon déclarative, sans
+  duplication de la liste de définitions.
+- **Écosystème** : compatibilité directe avec LangSmith (traçabilité),
+  LangGraph (orchestration avancée) et des dizaines d'intégrations tierces.
 
 ## Prérequis
 
@@ -61,11 +90,11 @@ ROUTING_STRATEGY=embeddings
 
 ### Stratégies de routage disponibles
 
-| Stratégie    | Description                              | API requise |
-|-------------|------------------------------------------|-------------|
-| `embeddings` | Similarité cosinus avec embeddings OpenAI | Oui         |
-| `llm`        | Classification par appel LLM              | Oui         |
-| `keywords`   | Correspondance par mots-clés (fallback)   | Non         |
+| Stratégie    | Description                                                  | API requise |
+|-------------|--------------------------------------------------------------|-------------|
+| `embeddings` | `OpenAIEmbeddings` + similarité cosinus (LangChain)          | Oui         |
+| `llm`        | Chaîne LCEL `ChatPromptTemplate \| ChatOpenAI \| StrOutputParser` | Oui    |
+| `keywords`   | Correspondance par mots-clés (fallback, aucune API)          | Non         |
 
 ## Utilisation
 
@@ -99,3 +128,4 @@ La base SQLite `orders.db` contient deux tables :
   - `invoiced` : facturée (en attente d'expédition)
   - `shipped` : expédiée (en cours de livraison)
   - `delivered` : livrée
+
