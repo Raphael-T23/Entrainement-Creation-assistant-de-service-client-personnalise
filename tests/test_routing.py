@@ -1,4 +1,4 @@
-"""Tests for the semantic routing module."""
+"""Tests pour le module de routage sémantique."""
 
 import pytest
 
@@ -9,7 +9,7 @@ from src.routing import (
 
 
 class TestKeywordRouting:
-    """Test the keyword-based fallback router."""
+    """Teste le routeur de repli basé sur les mots-clés."""
 
     def test_order_status_query(self):
         assert route_with_keywords("Où en est ma commande ?") == "service_client"
@@ -55,7 +55,7 @@ class TestKeywordRouting:
 
 
 class TestSemanticRouterKeywords:
-    """Test the SemanticRouter class with keyword strategy."""
+    """Teste la classe SemanticRouter avec la stratégie mots-clés."""
 
     def test_customer_service_query(self):
         router = SemanticRouter(client=None, strategy="keywords")
@@ -71,6 +71,6 @@ class TestSemanticRouterKeywords:
         assert router.classify("Quelle heure est-il ?") == "hors_sujet"
 
     def test_fallback_to_keywords_without_client(self):
-        """When strategy is 'embeddings' but no client, falls back to keywords."""
+        """Quand la stratégie est 'embeddings' mais sans client, bascule vers les mots-clés."""
         router = SemanticRouter(client=None, strategy="embeddings")
         assert router.classify("Statut de ma commande") == "service_client"

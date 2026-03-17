@@ -1,4 +1,4 @@
-"""Tests for the main bot module."""
+"""Tests pour le module principal du bot."""
 
 import sqlite3
 import tempfile
@@ -14,7 +14,7 @@ from src.bot import CustomerServiceBot, OFF_TOPIC_RESPONSE
 
 @pytest.fixture
 def test_db():
-    """Create a temporary test database with sample data."""
+    """Crée une base de données de test temporaire avec des données d'exemple."""
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     conn = sqlite3.connect(path)
@@ -70,10 +70,10 @@ def test_db():
 
 
 def _make_mock_llm():
-    """Create a mock LangChain ChatOpenAI that returns an empty response."""
+    """Crée un mock LangChain ChatOpenAI qui retourne une réponse vide."""
     mock_llm = MagicMock()
     mock_llm_with_tools = MagicMock()
-    # Default: return an AIMessage with no tool calls
+    # Par défaut : retourner un AIMessage sans appels d'outils
     default_response = AIMessage(content="")
     mock_llm_with_tools.invoke.return_value = default_response
     mock_llm.bind_tools.return_value = mock_llm_with_tools
@@ -82,7 +82,7 @@ def _make_mock_llm():
 
 @pytest.fixture
 def alice_bot(test_db):
-    """CustomerServiceBot fixture for Alice with a mocked LLM."""
+    """Fixture CustomerServiceBot pour Alice avec un LLM mocké."""
     mock_llm, _ = _make_mock_llm()
     return CustomerServiceBot(
         llm=mock_llm,
@@ -132,7 +132,7 @@ class TestBotToolExecution:
         result = alice_bot._execute_tool_call("get_all_orders", {})
         assert "101" in result
         assert "102" in result
-        assert "201" not in result  # Bob's order
+        assert "201" not in result  # Commande de Bob
 
     def test_get_order_details_existing(self, alice_bot):
         result = alice_bot._execute_tool_call("get_order_details", {"order_id": 101})
@@ -144,7 +144,7 @@ class TestBotToolExecution:
         assert "non trouvée" in result
 
     def test_get_order_details_other_user_order(self, alice_bot):
-        """Alice should not see Bob's order."""
+        """Alice ne doit pas voir la commande de Bob."""
         result = alice_bot._execute_tool_call("get_order_details", {"order_id": 201})
         assert "non trouvée" in result
 
@@ -164,7 +164,7 @@ class TestBotToolExecution:
 
 class TestBotChat:
     def test_off_topic_query_blocked(self, test_db):
-        """Off-topic queries should be blocked before reaching the LLM."""
+        """Les requêtes hors sujet doivent être bloquées avant d'atteindre le LLM."""
         mock_llm, mock_llm_with_tools = _make_mock_llm()
         bot = CustomerServiceBot(
             llm=mock_llm,
@@ -174,11 +174,11 @@ class TestBotChat:
         )
         response = bot.chat("Quel temps fait-il ?")
         assert response == OFF_TOPIC_RESPONSE
-        # The LLM should not have been called
+        # Le LLM ne doit pas avoir été appelé
         mock_llm_with_tools.invoke.assert_not_called()
 
     def test_customer_service_query_calls_llm(self, test_db):
-        """Customer service queries should be forwarded to the LLM."""
+        """Les requêtes de service client doivent être transmises au LLM."""
         mock_llm, mock_llm_with_tools = _make_mock_llm()
         mock_llm_with_tools.invoke.return_value = AIMessage(
             content="Votre commande n°101 a été livrée."
@@ -194,10 +194,10 @@ class TestBotChat:
         mock_llm_with_tools.invoke.assert_called_once()
 
     def test_tool_call_flow(self, test_db):
-        """Test that tool calls are properly handled in the multi-step loop."""
+        """Vérifie que les appels d'outils sont correctement gérés dans la boucle multi-étapes."""
         mock_llm, mock_llm_with_tools = _make_mock_llm()
 
-        # First response: LLM requests a tool
+        # Première réponse : le LLM demande un outil
         first_response = AIMessage(
             content="",
             tool_calls=[
@@ -205,7 +205,7 @@ class TestBotChat:
                  "type": "tool_call"}
             ],
         )
-        # Second response: final answer
+        # Deuxième réponse : réponse finale
         final_response = AIMessage(
             content="Vous avez 2 commandes : n°102 (expédiée) et n°101 (livrée)."
         )
@@ -229,7 +229,7 @@ class TestBotChat:
             routing_strategy="keywords",
             db_path=test_db,
         )
-        # Simulate a previous turn in the history
+        # Simuler un tour précédent dans l'historique
         bot.chat_history.append(HumanMessage(content="test"))
         assert len(bot.chat_history) == 1
 
@@ -237,7 +237,7 @@ class TestBotChat:
         assert len(bot.chat_history) == 0
 
     def test_chat_history_updated_after_response(self, test_db):
-        """Each chat turn should append one HumanMessage and one AIMessage."""
+        """Chaque tour de chat doit ajouter un HumanMessage et un AIMessage."""
         mock_llm, mock_llm_with_tools = _make_mock_llm()
         mock_llm_with_tools.invoke.return_value = AIMessage(
             content="Votre commande est en cours de livraison."
@@ -257,7 +257,7 @@ class TestBotChat:
 
 class TestToolDefinitions:
     def test_tools_have_required_attributes(self, alice_bot):
-        """Each LangChain tool must expose name and description."""
+        """Chaque outil LangChain doit exposer un nom et une description."""
         for t in alice_bot.tools:
             assert hasattr(t, "name")
             assert hasattr(t, "description")

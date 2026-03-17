@@ -1,19 +1,18 @@
-"""Main bot module for the customer service assistant.
+"""Module principal du bot pour l'assistant de service client.
 
-Orchestrates the LLM, database access, semantic routing, and conversation
-management to provide a complete customer service experience.
+Orchestre le LLM, l'accès à la base de données, le routage sémantique et la
+gestion des conversations pour offrir une expérience complète de service client.
 
-This module uses the **LangChain** framework:
+Ce module utilise le framework **LangChain** :
 
-* ``ChatOpenAI`` (``langchain-openai``) replaces the raw ``openai.OpenAI``
-  client.
-* Tool functions are declared with LangChain's ``@tool`` decorator and bound
-  to the model via ``ChatOpenAI.bind_tools()``.
-* The conversation history is maintained as a list of typed LangChain
-  ``BaseMessage`` objects (``SystemMessage``, ``HumanMessage``, ``AIMessage``,
-  ``ToolMessage``), replacing the previous plain-dict format.
-* The tool-calling loop is driven by the ``AIMessage.tool_calls`` attribute
-  returned by LangChain, which avoids manual JSON parsing.
+* ``ChatOpenAI`` (``langchain-openai``) remplace le client brut ``openai.OpenAI``.
+* Les fonctions d'outil sont déclarées avec le décorateur ``@tool`` de LangChain
+  et liées au modèle via ``ChatOpenAI.bind_tools()``.
+* L'historique de conversation est maintenu sous forme de liste typée d'objets
+  LangChain ``BaseMessage`` (``SystemMessage``, ``HumanMessage``, ``AIMessage``,
+  ``ToolMessage``), remplaçant l'ancien format de dictionnaires.
+* La boucle d'appel aux outils est pilotée par l'attribut ``AIMessage.tool_calls``
+  retourné par LangChain, ce qui évite l'analyse JSON manuelle.
 """
 
 from typing import Optional
@@ -53,26 +52,26 @@ TRANSFER_RESPONSE = (
 
 
 class CustomerServiceBot:
-    """Customer service chatbot powered by LangChain and OpenAI.
+    """Chatbot de service client propulsé par LangChain et OpenAI.
 
-    The bot uses LangChain's ``ChatOpenAI`` as the language model backend and
-    exposes four ``@tool``-decorated functions to the model via
-    ``bind_tools()``.  Multi-turn tool calling is handled by an explicit loop
-    that inspects ``AIMessage.tool_calls``, executes each requested tool, and
-    feeds the results back as ``ToolMessage`` objects.
+    Le bot utilise ``ChatOpenAI`` de LangChain comme backend de modèle de langage
+    et expose quatre fonctions décorées avec ``@tool`` au modèle via
+    ``bind_tools()``. Les appels multi-tours aux outils sont gérés par une boucle
+    explicite qui inspecte ``AIMessage.tool_calls``, exécute chaque outil demandé,
+    et renvoie les résultats sous forme d'objets ``ToolMessage``.
 
     Attributes:
-        llm: ``ChatOpenAI`` instance.
-        llm_with_tools: LLM with the user-scoped tools bound via
+        llm: Instance de ``ChatOpenAI``.
+        llm_with_tools: LLM avec les outils limités à l'utilisateur liés via
             ``bind_tools()``.
-        model: The OpenAI model name.
-        user: Dict with authenticated user information.
-        system_prompt: Formatted system-prompt string for the current user.
-        tools: List of LangChain ``@tool`` functions scoped to the user.
-        router: ``SemanticRouter`` instance for query classification.
-        chat_history: Running list of ``BaseMessage`` objects (excludes the
-            system message, which is prepended on every call).
-        db_path: Path to the SQLite database.
+        model: Nom du modèle OpenAI.
+        user: Dict contenant les informations de l'utilisateur authentifié.
+        system_prompt: Chaîne du prompt système formatée pour l'utilisateur courant.
+        tools: Liste des fonctions ``@tool`` de LangChain limitées à l'utilisateur.
+        router: Instance de ``SemanticRouter`` pour la classification des requêtes.
+        chat_history: Liste courante d'objets ``BaseMessage`` (exclut le message
+            système, qui est préfixé à chaque appel).
+        db_path: Chemin vers la base de données SQLite.
     """
 
     def __init__(
@@ -83,51 +82,51 @@ class CustomerServiceBot:
         db_path: Optional[str] = None,
         llm: Optional[ChatOpenAI] = None,
         temperature: float = 0.3,
-        # openai_client is kept for backward compatibility and is ignored;
-        # use the `llm` parameter to inject a custom / mock LLM instead.
+        # openai_client est conservé pour la compatibilité ascendante et est ignoré ;
+        # utiliser le paramètre 'llm' pour injecter un LLM personnalisé ou mock.
         openai_client=None,
     ):
         self.model = model
         self.db_path = db_path
 
-        # Retrieve and validate the authenticated user
+        # Récupérer et valider l'utilisateur authentifié
         self.user = get_user_by_email(user_email, db_path)
         if not self.user:
             raise ValueError(
                 f"Utilisateur avec l'email '{user_email}' non trouvé dans la base."
             )
 
-        # Build the system prompt with user info
+        # Construire le prompt système avec les informations de l'utilisateur
         self.system_prompt: str = SYSTEM_PROMPT_TEMPLATE.format(
             first_name=self.user["first_name"],
             last_name=self.user["last_name"],
             email=self.user["email"],
         )
 
-        # Initialise the LangChain LLM (inject a mock in tests via `llm=`)
+        # Initialiser le LLM LangChain (injecter un mock dans les tests via `llm=`)
         self.llm: ChatOpenAI = llm if llm is not None else ChatOpenAI(
             model=model, temperature=temperature
         )
 
-        # Create user-scoped @tool functions and bind them to the LLM
+        # Créer les fonctions @tool limitées à l'utilisateur et les lier au LLM
         self.tools = self._create_user_tools()
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
-        # Conversation history (system message prepended on each call)
+        # Historique de conversation (le message système est préfixé à chaque appel)
         self.chat_history: list[BaseMessage] = []
 
-        # Semantic router
+        # Routeur sémantique
         self.router = SemanticRouter(strategy=routing_strategy, model=model)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Méthodes internes
     # ------------------------------------------------------------------
 
     def _execute_tool_call(self, name: str, arguments: dict) -> str:
-        """Execute a named tool and return its result as a string.
+        """Exécute un outil nommé et retourne son résultat sous forme de chaîne.
 
-        Keeping this as a separate method makes unit-testing the tool logic
-        straightforward without going through the LLM.
+        Garder cette logique dans une méthode séparée facilite les tests unitaires
+        de la logique des outils sans passer par le LLM.
         """
         user_id = self.user["user_id"]
 
@@ -161,10 +160,10 @@ class CustomerServiceBot:
         return "Outil inconnu."
 
     def _create_user_tools(self) -> list:
-        """Return a list of LangChain ``@tool`` functions scoped to this user.
+        """Retourne une liste de fonctions ``@tool`` LangChain limitées à cet utilisateur.
 
-        Each function delegates to :meth:`_execute_tool_call` so that the
-        tool logic can be tested directly on the bot instance.
+        Chaque fonction délègue à :meth:`_execute_tool_call` afin que la logique
+        des outils puisse être testée directement sur l'instance du bot.
         """
         bot = self
 
@@ -208,41 +207,41 @@ class CustomerServiceBot:
         return [get_all_orders, get_order_details, get_orders_by_status, transfer_to_human]
 
     # ------------------------------------------------------------------
-    # Public API
+    # API publique
     # ------------------------------------------------------------------
 
     def chat(self, user_message: str) -> str:
-        """Process a user message and return the bot's response.
+        """Traite un message utilisateur et retourne la réponse du bot.
 
-        Steps:
+        Étapes :
 
-        1. **Semantic routing** – off-topic queries are rejected before
-           reaching the LLM.
-        2. The user message and the running ``chat_history`` are assembled
-           into a message list (prefixed by the ``SystemMessage``).
-        3. The LLM (with tools bound) is invoked via
+        1. **Routage sémantique** – les requêtes hors sujet sont rejetées avant
+           d'atteindre le LLM.
+        2. Le message utilisateur et l'historique ``chat_history`` courant sont
+           assemblés en une liste de messages (préfixée par le ``SystemMessage``).
+        3. Le LLM (avec les outils liés) est invoqué via
            ``self.llm_with_tools.invoke()``.
-        4. If the response contains tool calls, each tool is executed and its
-           result is fed back as a ``ToolMessage``; the LLM is called again
-           until it returns a plain text answer.
-        5. The human / assistant pair is appended to ``chat_history`` and the
-           final text is returned.
+        4. Si la réponse contient des appels d'outils, chaque outil est exécuté et
+           son résultat est renvoyé sous forme de ``ToolMessage`` ; le LLM est
+           rappelé jusqu'à ce qu'il retourne une réponse textuelle finale.
+        5. La paire humain/assistant est ajoutée à ``chat_history`` et le texte
+           final est retourné.
         """
-        # Step 1: Semantic routing
+        # Étape 1 : Routage sémantique
         if not self.router.is_customer_service(user_message):
             return OFF_TOPIC_RESPONSE
 
-        # Step 2: Build the message list for this turn
+        # Étape 2 : Construire la liste de messages pour ce tour
         messages: list[BaseMessage] = (
             [SystemMessage(content=self.system_prompt)]
             + self.chat_history
             + [HumanMessage(content=user_message)]
         )
 
-        # Step 3: First LLM call
+        # Étape 3 : Premier appel au LLM
         response: AIMessage = self.llm_with_tools.invoke(messages)
 
-        # Step 4: Tool-calling loop
+        # Étape 4 : Boucle d'appel aux outils
         while response.tool_calls:
             messages.append(response)
             for tc in response.tool_calls:
@@ -252,13 +251,13 @@ class CustomerServiceBot:
                 )
             response = self.llm_with_tools.invoke(messages)
 
-        # Step 5: Persist the turn in chat_history and return
+        # Étape 5 : Enregistrer le tour dans chat_history et retourner
         bot_response: str = response.content or ""
         self.chat_history.append(HumanMessage(content=user_message))
         self.chat_history.append(AIMessage(content=bot_response))
         return bot_response
 
     def reset_conversation(self) -> None:
-        """Clear the conversation history (the system prompt is unaffected)."""
+        """Efface l'historique de conversation (le prompt système n'est pas affecté)."""
         self.chat_history = []
 

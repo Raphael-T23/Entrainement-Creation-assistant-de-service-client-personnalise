@@ -1,7 +1,7 @@
-"""Database access layer for the customer service assistant.
+"""Couche d'accès à la base de données pour l'assistant de service client.
 
-Provides safe, parameterized queries to the SQLite database
-containing users and orders information.
+Fournit des requêtes paramétrées et sécurisées vers la base de données SQLite
+contenant les informations des utilisateurs et des commandes.
 """
 
 import sqlite3
@@ -11,7 +11,7 @@ from typing import Optional
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "orders.db"
 
-# Human-readable status translations (French)
+# Traductions des statuts en libellés lisibles (français)
 STATUS_LABELS = {
     "invoiced": "facturée (en attente d'expédition)",
     "shipped": "expédiée (en cours de livraison)",
@@ -20,7 +20,7 @@ STATUS_LABELS = {
 
 
 def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
-    """Return a new SQLite connection with row factory enabled."""
+    """Retourne une nouvelle connexion SQLite avec la row factory activée."""
     path = db_path or str(DEFAULT_DB_PATH)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
@@ -28,7 +28,7 @@ def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 
 def get_user_by_email(email: str, db_path: Optional[str] = None) -> Optional[dict]:
-    """Retrieve a user record by email address."""
+    """Récupère un enregistrement utilisateur par adresse e-mail."""
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(
@@ -43,7 +43,7 @@ def get_user_by_email(email: str, db_path: Optional[str] = None) -> Optional[dic
 
 
 def get_orders_for_user(user_id: int, db_path: Optional[str] = None) -> list[dict]:
-    """Retrieve all orders for a given user_id."""
+    """Récupère toutes les commandes pour un user_id donné."""
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(
@@ -59,7 +59,7 @@ def get_orders_for_user(user_id: int, db_path: Optional[str] = None) -> list[dic
 def get_order_by_id(
     order_id: int, user_id: int, db_path: Optional[str] = None
 ) -> Optional[dict]:
-    """Retrieve a specific order, scoped to the authenticated user."""
+    """Récupère une commande spécifique, limitée à l'utilisateur authentifié."""
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(
@@ -76,7 +76,7 @@ def get_order_by_id(
 def get_orders_by_status(
     user_id: int, status: str, db_path: Optional[str] = None
 ) -> list[dict]:
-    """Retrieve orders for a user filtered by status."""
+    """Récupère les commandes d'un utilisateur filtrées par statut."""
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(
@@ -90,12 +90,12 @@ def get_orders_by_status(
 
 
 def format_status(status: str) -> str:
-    """Convert an internal status code to a human-readable French label."""
+    """Convertit un code de statut interne en libellé lisible en français."""
     return STATUS_LABELS.get(status, status)
 
 
 def format_order_summary(order: dict) -> str:
-    """Format a single order dict into a human-readable summary string."""
+    """Formate un dict de commande en une chaîne de résumé lisible."""
     lines = [f"Commande n°{order['order_id']}"]
     lines.append(f"  Statut : {format_status(order['status'])}")
     lines.append(f"  Date d'achat : {order['date_purchase']}")
