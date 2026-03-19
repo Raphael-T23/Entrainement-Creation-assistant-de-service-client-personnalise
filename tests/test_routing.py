@@ -1,7 +1,5 @@
 """Tests pour le module de routage sémantique."""
 
-import pytest
-
 from src.routing import (
     SemanticRouter,
     route_with_keywords,
