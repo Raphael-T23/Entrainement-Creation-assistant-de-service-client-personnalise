@@ -6,7 +6,7 @@ exclude =
     __pycache__
     venv
     .venv
-	build
+    build
     dist
     *.egg-info
     .tox
