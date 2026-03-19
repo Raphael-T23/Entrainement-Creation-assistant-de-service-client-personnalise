@@ -1,0 +1,38 @@
+[tool.black]
+line-length = 100
+target-version = ["py314"]
+include = '\.py$'
+exclude = '''
+(
+    \.git
+  | \.venv
+  | venv
+  | build
+  | dist
+  | src/__init__\.py
+  | tests/__init__\.py
+  | orders\.db
+  | users\.csv
+  | orders\.csv
+)
+'''
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests"
+]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip = [
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "orders.db",
+    "users.csv",
+    "orders.csv"
+]
