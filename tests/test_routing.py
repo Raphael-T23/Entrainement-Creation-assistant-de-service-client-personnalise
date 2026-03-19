@@ -1,8 +1,17 @@
 """Tests pour le module de routage sémantique."""
 
+from unittest.mock import patch
+
+import numpy as np
+
 from src.routing import (
     SemanticRouter,
+    _cosine_similarity,
+    route_with_embeddings,
     route_with_keywords,
+    route_with_llm,
+    CUSTOMER_SERVICE_REFERENCES,
+    OFF_TOPIC_REFERENCES,
 )
 
 
@@ -72,3 +81,156 @@ class TestSemanticRouterKeywords:
         """Quand la stratégie est 'embeddings' mais sans client, bascule vers les mots-clés."""
         router = SemanticRouter(client=None, strategy="embeddings")
         assert router.classify("Statut de ma commande") == "service_client"
+
+
+# -----------------------------------------------------------------------
+# Tests de _cosine_similarity (calcul pur numpy, sans appel API)
+# -----------------------------------------------------------------------
+
+
+class TestCosineSimilarity:
+    """Teste la fonction utilitaire de similarité cosinus."""
+
+    def test_identical_vectors(self):
+        """Deux vecteurs identiques doivent avoir une similarité de 1."""
+        a = np.array([1.0, 0.0, 0.0])
+        b = np.array([[1.0, 0.0, 0.0]])
+        result = _cosine_similarity(a, b)
+        assert result.shape == (1,)
+        assert np.isclose(result[0], 1.0)
+
+    def test_orthogonal_vectors(self):
+        """Deux vecteurs orthogonaux doivent avoir une similarité de 0."""
+        a = np.array([1.0, 0.0])
+        b = np.array([[0.0, 1.0]])
+        result = _cosine_similarity(a, b)
+        assert np.isclose(result[0], 0.0)
+
+    def test_multiple_references(self):
+        """Vérifier la forme du résultat avec plusieurs vecteurs de référence."""
+        a = np.array([1.0, 0.0, 0.0])
+        b = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.5, 0.5, 0.0],
+            ]
+        )
+        result = _cosine_similarity(a, b)
+        assert result.shape == (3,)
+        # Le premier est identique → max similarité
+        assert np.argmax(result) == 0
+
+
+# -----------------------------------------------------------------------
+# Tests de route_with_embeddings (mock de _compute_embeddings)
+# -----------------------------------------------------------------------
+
+
+def _make_fake_embeddings(cs_score: float, ot_score: float):
+    """Construit des embeddings synthétiques qui donneront les scores voulus.
+
+    Retourne un array où :
+    - index 0 = query (vecteur unitaire sur l'axe 0)
+    - index 1..N = refs service client (vecteur orienté vers query selon cs_score)
+    - index N+1.. = refs hors sujet (vecteur orienté vers query selon ot_score)
+    """
+    query = np.array([1.0, 0.0, 0.0])
+
+    def _vec_with_similarity(target_sim: float) -> np.ndarray:
+        """Construit un vecteur unitaire ayant ~target_sim de cosinus avec query."""
+        v = np.array([target_sim, np.sqrt(1 - target_sim**2), 0.0])
+        return v / np.linalg.norm(v)
+
+    cs_vec = _vec_with_similarity(cs_score)
+    ot_vec = _vec_with_similarity(ot_score)
+
+    n_cs = len(CUSTOMER_SERVICE_REFERENCES)
+    n_ot = len(OFF_TOPIC_REFERENCES)
+
+    rows = [query]
+    rows.extend([cs_vec] * n_cs)
+    rows.extend([ot_vec] * n_ot)
+    return np.array(rows)
+
+
+class TestRouteWithEmbeddings:
+    """Teste route_with_embeddings en mockant _compute_embeddings."""
+
+    @patch("src.routing._compute_embeddings")
+    def test_clear_customer_service(self, mock_embed):
+        """Score CS nettement supérieur → 'service_client' sans appel LLM."""
+        mock_embed.return_value = _make_fake_embeddings(cs_score=0.95, ot_score=0.3)
+        assert route_with_embeddings("ma commande") == "service_client"
+
+    @patch("src.routing._compute_embeddings")
+    def test_clear_off_topic(self, mock_embed):
+        """Score hors sujet nettement supérieur → 'hors_sujet' sans appel LLM."""
+        mock_embed.return_value = _make_fake_embeddings(cs_score=0.3, ot_score=0.95)
+        assert route_with_embeddings("la météo") == "hors_sujet"
+
+    @patch("src.routing.route_with_llm", return_value="service_client")
+    @patch("src.routing._compute_embeddings")
+    def test_ambiguous_falls_back_to_llm(self, mock_embed, mock_llm):
+        """Scores proches → cas ambigu, bascule vers route_with_llm."""
+        mock_embed.return_value = _make_fake_embeddings(cs_score=0.7, ot_score=0.65)
+        result = route_with_embeddings("question ambiguë")
+        assert result == "service_client"
+        mock_llm.assert_called_once_with("question ambiguë")
+
+
+# -----------------------------------------------------------------------
+# Tests de route_with_llm (mock de la chaîne LCEL)
+# -----------------------------------------------------------------------
+
+
+class TestRouteWithLlm:
+    """Teste route_with_llm en mockant la chaîne LCEL complète."""
+
+    @patch("src.routing.StrOutputParser")
+    @patch("src.routing.ChatOpenAI")
+    @patch("src.routing.ROUTING_CHAT_PROMPT")
+    def test_returns_service_client(self, mock_prompt, mock_chat_cls, mock_parser):
+        """Le LLM retourne 'service_client' → la fonction aussi."""
+        # On mocke l'opérateur | pour que prompt | llm | parser retourne
+        # un objet dont invoke() renvoie la réponse voulue.
+        mock_chain = mock_prompt.__or__.return_value.__or__.return_value
+        mock_chain.invoke.return_value = "service_client"
+        assert route_with_llm("Où en est ma commande ?") == "service_client"
+
+    @patch("src.routing.StrOutputParser")
+    @patch("src.routing.ChatOpenAI")
+    @patch("src.routing.ROUTING_CHAT_PROMPT")
+    def test_returns_hors_sujet(self, mock_prompt, mock_chat_cls, mock_parser):
+        """Le LLM retourne 'hors_sujet' → la fonction aussi."""
+        mock_chain = mock_prompt.__or__.return_value.__or__.return_value
+        mock_chain.invoke.return_value = "hors_sujet"
+        assert route_with_llm("Quel temps fait-il ?") == "hors_sujet"
+
+
+# -----------------------------------------------------------------------
+# Tests de SemanticRouter avec stratégie "llm" (mock)
+# -----------------------------------------------------------------------
+
+
+class TestSemanticRouterLlm:
+    """Teste la classe SemanticRouter avec la stratégie 'llm'."""
+
+    @patch("src.routing.route_with_llm", return_value="service_client")
+    def test_llm_strategy_service_client(self, mock_llm):
+        """Stratégie 'llm' → délègue à route_with_llm."""
+        router = SemanticRouter(strategy="llm")
+        assert router.classify("Ma commande est en retard") == "service_client"
+        mock_llm.assert_called_once()
+
+    @patch("src.routing.route_with_llm", return_value="hors_sujet")
+    def test_llm_strategy_off_topic(self, mock_llm):
+        router = SemanticRouter(strategy="llm")
+        assert router.classify("Raconte une blague") == "hors_sujet"
+
+    @patch("src.routing.route_with_llm", side_effect=Exception("API down"))
+    def test_llm_strategy_fallback_to_keywords(self, mock_llm):
+        """Si l'API échoue en stratégie 'llm', bascule vers les mots-clés."""
+        router = SemanticRouter(strategy="llm")
+        assert router.classify("Statut de ma commande") == "service_client"
+        assert router.classify("Quel temps fait-il ?") == "hors_sujet"
