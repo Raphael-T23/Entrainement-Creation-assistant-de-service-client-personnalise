@@ -27,6 +27,9 @@ from langchain_core.messages import (
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
+# --- Import du faux LLM pour le mode test (activé via MOCK_LLM=true dans .env) ---
+from .fake_llm import FakeChatOpenAI
+
 from .database import (
     format_order_summary,
     get_order_by_id,
@@ -82,19 +85,22 @@ class CustomerServiceBot:
         db_path: Optional[str] = None,
         llm: Optional[ChatOpenAI] = None,
         temperature: float = 0.3,
+        # --- Option mode mock : si True, utilise FakeChatOpenAI au lieu d'OpenAI ---
+        # Activé par la variable d'environnement MOCK_LLM=true dans .env.
+        # Permet de tester le bot sans clé API et sans frais.
+        mock_llm: bool = False,
         # openai_client est conservé pour la compatibilité ascendante et est ignoré ;
         # utiliser le paramètre 'llm' pour injecter un LLM personnalisé ou mock.
         openai_client=None,
     ):
         self.model = model
         self.db_path = db_path
+        self._mock_mode = mock_llm
 
         # Récupérer et valider l'utilisateur authentifié
         self.user = get_user_by_email(user_email, db_path)
         if not self.user:
-            raise ValueError(
-                f"Utilisateur avec l'email '{user_email}' non trouvé dans la base."
-            )
+            raise ValueError(f"Utilisateur avec l'email '{user_email}' non trouvé dans la base.")
 
         # Construire le prompt système avec les informations de l'utilisateur
         self.system_prompt: str = SYSTEM_PROMPT_TEMPLATE.format(
@@ -103,10 +109,20 @@ class CustomerServiceBot:
             email=self.user["email"],
         )
 
-        # Initialiser le LLM LangChain (injecter un mock dans les tests via `llm=`)
-        self.llm: ChatOpenAI = llm if llm is not None else ChatOpenAI(
-            model=model, temperature=temperature
-        )
+        # --- Initialisation du LLM ---
+        # Priorité : 1) llm injecté (tests unitaires)  2) mock_llm  3) vrai ChatOpenAI
+        if llm is not None:
+            # LLM injecté directement (ex: tests unitaires avec MagicMock)
+            self.llm = llm
+        elif mock_llm:
+            # Mode mock explicite (MOCK_LLM=true dans .env) : on utilise le faux
+            # LLM et on force le routage par mots-clés car les stratégies
+            # "embeddings" et "llm" nécessitent elles aussi une clé API valide.
+            self.llm = FakeChatOpenAI(model=model, temperature=temperature)
+            routing_strategy = "keywords"
+        else:
+            # Mode normal : vrai LLM OpenAI (nécessite OPENAI_API_KEY)
+            self.llm = ChatOpenAI(model=model, temperature=temperature)
 
         # Créer les fonctions @tool limitées à l'utilisateur et les lier au LLM
         self.tools = self._create_user_tools()
@@ -246,9 +262,7 @@ class CustomerServiceBot:
             messages.append(response)
             for tc in response.tool_calls:
                 result = self._execute_tool_call(tc["name"], tc["args"])
-                messages.append(
-                    ToolMessage(content=result, tool_call_id=tc["id"])
-                )
+                messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
             response = self.llm_with_tools.invoke(messages)
 
         # Étape 5 : Enregistrer le tour dans chat_history et retourner
@@ -260,4 +274,3 @@ class CustomerServiceBot:
     def reset_conversation(self) -> None:
         """Efface l'historique de conversation (le prompt système n'est pas affecté)."""
         self.chat_history = []
-
