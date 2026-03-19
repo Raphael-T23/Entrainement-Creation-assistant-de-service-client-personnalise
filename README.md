@@ -16,6 +16,8 @@ statut de leurs commandes.
   d'atteindre le LLM.
 - **Protection des données** : Un utilisateur ne peut accéder qu'à ses propres
   commandes. Les injections de prompt sont bloquées.
+- **Mode test (Mock LLM)** : Un faux LLM intégré permet de tester le bot
+  sans clé API OpenAI et sans frais, via la variable `MOCK_LLM=true`.
 
 ## Architecture
 
@@ -26,6 +28,7 @@ src/
 ├── prompts.py     # Prompts système et templates (ChatPromptTemplate)
 ├── routing.py     # Routage sémantique (embeddings, LCEL, mots-clés)
 ├── bot.py         # Logique principale du bot (ChatOpenAI, @tool, bind_tools)
+├── fake_llm.py    # Faux LLM pour le mode test (MOCK_LLM=true)
 └── main.py        # Point d'entrée interactif (CLI)
 
 tests/
@@ -67,7 +70,7 @@ couche d'orchestration LLM. Voici les composants utilisés :
 ## Prérequis
 
 - Python 3.10+
-- Une clé API OpenAI
+- Une clé API OpenAI (facultative en mode test avec `MOCK_LLM=true`)
 
 ## Installation
 
@@ -86,7 +89,16 @@ OPENAI_API_KEY=sk-votre-cle-api
 OPENAI_MODEL=gpt-4o-mini
 DATABASE_PATH=orders.db
 ROUTING_STRATEGY=embeddings
+MOCK_LLM=false
 ```
+
+| Variable           | Description                                           | Requis            |
+|--------------------|-------------------------------------------------------|-------------------|
+| `OPENAI_API_KEY`   | Clé API OpenAI                                        | Oui (sauf mock)   |
+| `OPENAI_MODEL`     | Modèle à utiliser (défaut : `gpt-4o-mini`)            | Non               |
+| `DATABASE_PATH`    | Chemin vers la base SQLite (défaut : `orders.db`)     | Non               |
+| `ROUTING_STRATEGY` | Stratégie de routage (voir ci-dessous)                | Non               |
+| `MOCK_LLM`         | `true` pour activer le faux LLM de test               | Non               |
 
 ### Stratégies de routage disponibles
 
@@ -104,6 +116,30 @@ python -m src.main
 
 Le bot vous demandera votre adresse email pour vous authentifier, puis vous
 pourrez poser vos questions en langage naturel.
+
+### Mode test (Mock LLM)
+
+Pour tester le bot sans clé API OpenAI, activez le mode mock dans `.env` :
+
+```
+MOCK_LLM=true
+```
+
+Dans ce mode :
+- Le bot utilise `FakeChatOpenAI` (défini dans `src/fake_llm.py`), un faux
+  LLM qui analyse les messages par mots-clés et regex.
+- Le routage sémantique bascule automatiquement sur la stratégie `keywords`
+  (aucun appel API).
+- Les outils (consultation de commandes, transfert agent humain) fonctionnent
+  normalement.
+- Un bandeau d'avertissement s'affiche au démarrage pour rappeler que le mode
+  test est actif.
+
+Les réponses en mode mock sont moins naturelles qu'avec un vrai LLM, mais le
+flux complet (routage → appel d'outils → réponse) est exercé.
+
+Pour repasser en mode normal, retirez `MOCK_LLM=true` ou mettez
+`MOCK_LLM=false`, et assurez-vous que `OPENAI_API_KEY` est bien définie.
 
 ### Exemples de questions supportées
 
